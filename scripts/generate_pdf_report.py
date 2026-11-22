@@ -282,3 +282,4 @@ if __name__ == "__main__":
     out = "/Users/srivrac10/Desktop/Osdag/OsdagBridge/docs/SUBSTRUCTURE_AND_IFC_REPORT.pdf"
     os.makedirs(os.path.dirname(out), exist_ok=True)
     generate_pdf(out)
+

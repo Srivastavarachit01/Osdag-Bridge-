@@ -19,10 +19,12 @@ dependencies:
   - pydantic
   - xarray
   - ifcopenshell
+  - reportlab
 
   # development install
   - pip
   - pip:
     - openseespy>=3.2.2.6
     - opsvis
+    - PySide6
     - -e .

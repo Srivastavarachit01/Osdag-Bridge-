@@ -1486,6 +1486,10 @@ def main():
     app = QApplication(sys.argv)
 
     bridge_parameters = BridgeParametersDTO(
+        # --- Material Grades ---
+        steel_grade="E250",
+        concrete_grade="M35",
+
         # --- Girder ---
         span_length_L=25_000,
         girder_section_d=900,
