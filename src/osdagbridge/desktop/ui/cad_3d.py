@@ -6,8 +6,20 @@
 - Multi-select component visibility
 """
 
+import os
 import sys
 import math
+
+# Automatically configure Qt platform plugin path for PySide6 on macOS / conda
+try:
+    import PySide6
+    _pyside_dir = os.path.dirname(PySide6.__file__)
+    _plugin_dir = os.path.join(_pyside_dir, "Qt", "plugins", "platforms")
+    if os.path.exists(_plugin_dir):
+        os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", _plugin_dir)
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_pyside_dir, "Qt", "plugins"))
+except Exception:
+    pass
 
 from PySide6.QtWidgets import (
     QApplication,
