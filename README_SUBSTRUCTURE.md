@@ -89,3 +89,4 @@ conda activate osdagbridge-env
 cd src
 python -m osdagbridge.desktop
 ```
+
