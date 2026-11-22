@@ -59,6 +59,14 @@ class BridgeGeometryMapper:
 
     # --- NATIVE PROFILE TRANSLATORS ---
     
+    def create_circle_profile(self, radius):
+        """Creates an IfcCircleProfileDef for circular columns, piles, and rebar."""
+        return self.file.createIfcCircleProfileDef(
+            ProfileType="AREA", ProfileName=None,
+            Position=self.create_axis2placement_2d(),
+            Radius=float(radius)
+        )
+
     def create_rectangular_profile(self, width, height):
         return self.file.createIfcRectangleProfileDef(
             ProfileType="AREA", ProfileName=None,

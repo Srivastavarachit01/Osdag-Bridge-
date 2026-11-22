@@ -119,13 +119,20 @@ class PlateGirderIFCExtractor:
         # Step 2: Solve for structural girder layout
         n_girders, spacing, overhang = self._solve_girder_layout(total_width)
         
+        substructure = self._extract_substructure()
+
         return {
             "girders": self._extract_girders(n_girders, spacing),
             "stiffeners": self._extract_stiffeners(n_girders, spacing),
             "cross_bracings": self._extract_cross_bracings(n_girders, spacing),
             "deck_slab": self._extract_deck_slab(total_width),
             "crash_barriers": self._extract_safety_components(total_width, actual_base_width, actual_railing_width),
-            "supports": self._extract_supports(n_girders, spacing)
+            "supports": self._extract_supports(n_girders, spacing),
+            "pier_caps": substructure["pier_caps"],
+            "piers": substructure["piers"],
+            "pile_caps": substructure["pile_caps"],
+            "piles": substructure["piles"],
+            "reinforcement": substructure["reinforcement"]
         }
 
     def _solve_girder_layout(self, total_width):
@@ -492,3 +499,117 @@ class PlateGirderIFCExtractor:
                 uDir=[0,1,0], wDir=[0,0,1], ifc_name=f"Cylindrical Support {i+1}"))
                 
         return {"supports_tri": [s for s in supports if s._class_name == "StiffenerPlate"], "supports_cyl": [s for s in supports if s._class_name == "CircularSolid"]}
+
+    def _extract_substructure(self):
+        """Extracts parametric substructure components (pier caps, piers, pile caps, piles, rebar)."""
+        pier_caps = []
+        piers = []
+        pile_caps = []
+        piles = []
+        rebar = []
+
+        D = getattr(self.cad, 'girder_section_d', 1500.0)
+        tf_b = getattr(self.cad, 'girder_section_tf_b', 25.0)
+        z_contact = -(D / 2.0 + tf_b)
+        bearing_height = 120.0
+        z_cap_top = z_contact - bearing_height
+
+        pier_cap_top_width = getattr(self.cad, 'pier_cap_top_width', 3000.0)
+        pier_cap_bottom_width = getattr(self.cad, 'pier_cap_bottom_width', 1200.0)
+        pier_cap_depth = getattr(self.cad, 'pier_cap_depth', 600.0)
+        pier_cap_length = getattr(self.cad, 'pier_cap_length', 1200.0)
+
+        pier_diameter = getattr(self.cad, 'pier_diameter', 800.0)
+        pier_height = getattr(self.cad, 'pier_height', 3000.0)
+
+        pile_cap_length = getattr(self.cad, 'pile_cap_length', 2200.0)
+        pile_cap_width = getattr(self.cad, 'pile_cap_width', 1200.0)
+        pile_cap_depth = getattr(self.cad, 'pile_cap_depth', 600.0)
+
+        pile_diameter = getattr(self.cad, 'pile_diameter', 400.0)
+        pile_length = getattr(self.cad, 'pile_length', 5000.0)
+        pile_spacing = getattr(self.cad, 'pile_spacing', 600.0)
+
+        rebar_main_dia = getattr(self.cad, 'rebar_main_diameter', 16.0)
+        rebar_tie_dia = getattr(self.cad, 'rebar_transverse_diameter', 8.0)
+        rebar_cover = getattr(self.cad, 'rebar_cover', 40.0)
+        rebar_spacing_long = getattr(self.cad, 'rebar_spacing_longitudinal', 150.0)
+
+        positions = [("Left", 0.0), ("Right", self.cad.span_length_L)]
+        for label, x_pos in positions:
+            # 1. Pier Cap
+            pier_caps.append(ExtractedObject(
+                "PierCap",
+                top_width=pier_cap_top_width,
+                bottom_width=pier_cap_bottom_width,
+                depth=pier_cap_depth,
+                length=pier_cap_length,
+                origin=[x_pos, 0.0, z_cap_top],
+                skew=self.skew_angle,
+                ifc_name=f"Pier Cap {label}"
+            ))
+
+            # 2. Pier Column
+            z_pier_top = z_cap_top - pier_cap_depth
+            piers.append(ExtractedObject(
+                "PierColumn",
+                diameter=pier_diameter,
+                height=pier_height,
+                origin=[x_pos, 0.0, z_pier_top - pier_height],
+                ifc_name=f"Pier Column {label}"
+            ))
+
+            # 3. Pile Cap
+            z_pile_cap_top = z_pier_top - pier_height
+            pile_caps.append(ExtractedObject(
+                "PileCap",
+                length=pile_cap_length,
+                width=pile_cap_width,
+                depth=pile_cap_depth,
+                origin=[x_pos, 0.0, z_pile_cap_top - pile_cap_depth],
+                skew=self.skew_angle,
+                ifc_name=f"Pile Cap {label}"
+            ))
+
+            # 4. Piles (2x2 grid)
+            z_pile_top = z_pile_cap_top - pile_cap_depth
+            half_s = pile_spacing / 2.0
+            p_offsets = [
+                (-half_s, -half_s),
+                (half_s, -half_s),
+                (-half_s, half_s),
+                (half_s, half_s)
+            ]
+            for p_idx, (dx, dy) in enumerate(p_offsets):
+                piles.append(ExtractedObject(
+                    "Pile",
+                    diameter=pile_diameter,
+                    length=pile_length,
+                    origin=[x_pos + dx, dy, z_pile_top - pile_length],
+                    ifc_name=f"Pile {label}_{p_idx + 1}"
+                ))
+
+            # 5. Reinforcement for Pier Column
+            r_pitch = (pier_diameter / 2.0) - rebar_cover - rebar_tie_dia - (rebar_main_dia / 2.0)
+            if r_pitch > 0:
+                n_bars = max(6, int(round((2.0 * math.pi * r_pitch) / rebar_spacing_long)))
+                for b_i in range(n_bars):
+                    ang = (2.0 * math.pi * b_i) / n_bars
+                    bx = x_pos + r_pitch * math.cos(ang)
+                    by = r_pitch * math.sin(ang)
+                    rebar.append(ExtractedObject(
+                        "ReinforcingBar",
+                        diameter=rebar_main_dia,
+                        length=pier_height - 2.0 * rebar_cover,
+                        origin=[bx, by, (z_pier_top - pier_height) + rebar_cover],
+                        dir=[0.0, 0.0, 1.0],
+                        ifc_name=f"Pier {label} Main Rebar {b_i + 1}"
+                    ))
+
+        return {
+            "pier_caps": pier_caps,
+            "piers": piers,
+            "pile_caps": pile_caps,
+            "piles": piles,
+            "reinforcement": rebar
+        }

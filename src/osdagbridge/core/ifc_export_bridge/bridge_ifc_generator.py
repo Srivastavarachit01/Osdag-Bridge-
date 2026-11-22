@@ -60,14 +60,18 @@ class BridgeIfcGenerator:
         self.site = self.file.createIfcSite(create_ifc_guid(), self._owner_history, Name="Default Site", ObjectPlacement=self.file.createIfcLocalPlacement(None, place_3d))
         self.building = self.file.createIfcBuilding(create_ifc_guid(), self._owner_history, Name="Bridge Structure", ObjectPlacement=self.file.createIfcLocalPlacement(self.site.ObjectPlacement, place_3d))
         self.storey = self.file.createIfcBuildingStorey(create_ifc_guid(), self._owner_history, Name="Superstructure", ObjectPlacement=self.file.createIfcLocalPlacement(self.building.ObjectPlacement, place_3d))
+        self.substructure_storey = self.file.createIfcBuildingStorey(create_ifc_guid(), self._owner_history, Name="Substructure", ObjectPlacement=self.file.createIfcLocalPlacement(self.building.ObjectPlacement, place_3d))
         
         # Relate hierarchy
         self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.project, RelatedObjects=[self.site])
         self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.site, RelatedObjects=[self.building])
-        self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.building, RelatedObjects=[self.storey])
+        self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.building, RelatedObjects=[self.storey, self.substructure_storey])
 
     def bind_element_to_storey(self, element):
         self.file.createIfcRelContainedInSpatialStructure(create_ifc_guid(), self._owner_history, RelatingStructure=self.storey, RelatedElements=[element])
+
+    def bind_element_to_substructure(self, element):
+        self.file.createIfcRelContainedInSpatialStructure(create_ifc_guid(), self._owner_history, RelatingStructure=self.substructure_storey, RelatedElements=[element])
 
     def generate_from_extracted_data(self, extracted_dict, cad_context=None):
         """Consume extracted dictionary logic and bind to schema."""
@@ -597,6 +601,144 @@ class BridgeIfcGenerator:
                  self.bind_element_to_storey(elem)
                  self.metadata.map_barrier(elem, cad_context, item.ifc_name)
 
+        # SUBSTRUCTURE PROCESSING
+        CONCRETE_SUBSTRUCTURE_COLOR = (0.75, 0.75, 0.75)
+        REBAR_COLOR = (0.7, 0.3, 0.15)
+
+        def _process_pier(item):
+            radius = (item.diameter / 2.0) * s
+            height = item.height * s
+            prof = self.mapper.create_circle_profile(radius)
+            scaled_origin = [v * s for v in item.origin]
+            place = self.mapper.create_axis2placement_3d(scaled_origin, z_dir=(0,0,1), x_dir=(1,0,0))
+            local_identity = self.mapper.create_axis2placement_3d((0,0,0), z_dir=(0,0,1), x_dir=(1,0,0))
+            solid = self.mapper.create_extruded_solid(prof, height, local_identity)
+            shape = self.file.createIfcShapeRepresentation(self.mapper._context3d, "Body", "SweptSolid", [solid])
+            self.mapper.apply_color(shape, CONCRETE_SUBSTRUCTURE_COLOR)
+            prod_def = self.file.createIfcProductDefinitionShape(None, None, [shape])
+            elem = self.file.createIfcColumn(
+                create_ifc_guid(), self._owner_history, Name=item.ifc_name,
+                ObjectPlacement=self.file.createIfcLocalPlacement(self.substructure_storey.ObjectPlacement, place),
+                Representation=prod_def
+            )
+            self.bind_element_to_substructure(elem)
+            self.metadata.assign_metadata(elem, {
+                "ComponentType": "Pier Column",
+                "Diameter_m": item.diameter * s,
+                "Height_m": item.height * s,
+                "Material": "Reinforced Concrete",
+                "ConcreteGrade": getattr(cad_context, 'concrete_grade', 'M40')
+            }, property_set_name="Pset_OsdagSubstructure")
+
+        def _process_pier_cap(item):
+            half_top = (item.top_width / 2.0) * s
+            half_bot = (item.bottom_width / 2.0) * s
+            depth = item.depth * s
+            length = item.length * s
+            
+            pts = [
+                (-half_top, depth),
+                (half_top, depth),
+                (half_bot, 0.0),
+                (-half_bot, 0.0)
+            ]
+            prof = self.mapper.create_polygonal_profile(pts, "PierCapProfile")
+            scaled_origin = [item.origin[0] * s - (length / 2.0), 0.0, (item.origin[2] - item.depth) * s]
+            place = self.mapper.create_axis2placement_3d(scaled_origin, z_dir=(1,0,0), x_dir=(0,1,0))
+            local_identity = self.mapper.create_axis2placement_3d((0,0,0), z_dir=(0,0,1), x_dir=(1,0,0))
+            solid = self.mapper.create_extruded_solid(prof, length, local_identity)
+            shape = self.file.createIfcShapeRepresentation(self.mapper._context3d, "Body", "SweptSolid", [solid])
+            self.mapper.apply_color(shape, CONCRETE_SUBSTRUCTURE_COLOR)
+            prod_def = self.file.createIfcProductDefinitionShape(None, None, [shape])
+            elem = self.file.createIfcBeam(
+                create_ifc_guid(), self._owner_history, Name=item.ifc_name,
+                ObjectPlacement=self.file.createIfcLocalPlacement(self.substructure_storey.ObjectPlacement, place),
+                Representation=prod_def
+            )
+            self.bind_element_to_substructure(elem)
+            self.metadata.assign_metadata(elem, {
+                "ComponentType": "Hammerhead Pier Cap",
+                "TopWidth_m": item.top_width * s,
+                "BottomWidth_m": item.bottom_width * s,
+                "Depth_m": depth,
+                "Length_m": length,
+                "Material": "Reinforced Concrete",
+                "ConcreteGrade": getattr(cad_context, 'concrete_grade', 'M40')
+            }, property_set_name="Pset_OsdagSubstructure")
+
+        def _process_pile_cap(item):
+            prof = self.mapper.create_rectangular_profile(item.length * s, item.width * s)
+            scaled_origin = [item.origin[0] * s, item.origin[1] * s, item.origin[2] * s]
+            place = self.mapper.create_axis2placement_3d(scaled_origin, z_dir=(0,0,1), x_dir=(1,0,0))
+            local_identity = self.mapper.create_axis2placement_3d((0,0,0), z_dir=(0,0,1), x_dir=(1,0,0))
+            solid = self.mapper.create_extruded_solid(prof, item.depth * s, local_identity)
+            shape = self.file.createIfcShapeRepresentation(self.mapper._context3d, "Body", "SweptSolid", [solid])
+            self.mapper.apply_color(shape, CONCRETE_SUBSTRUCTURE_COLOR)
+            prod_def = self.file.createIfcProductDefinitionShape(None, None, [shape])
+            elem = self.file.createIfcFooting(
+                create_ifc_guid(), self._owner_history, Name=item.ifc_name,
+                ObjectPlacement=self.file.createIfcLocalPlacement(self.substructure_storey.ObjectPlacement, place),
+                Representation=prod_def, PredefinedType="PAD_FOOTING"
+            )
+            self.bind_element_to_substructure(elem)
+            self.metadata.assign_metadata(elem, {
+                "ComponentType": "Pile Cap",
+                "Length_m": item.length * s,
+                "Width_m": item.width * s,
+                "Depth_m": item.depth * s,
+                "Material": "Reinforced Concrete",
+                "ConcreteGrade": getattr(cad_context, 'concrete_grade', 'M40')
+            }, property_set_name="Pset_OsdagSubstructure")
+
+        def _process_pile(item):
+            radius = (item.diameter / 2.0) * s
+            length = item.length * s
+            prof = self.mapper.create_circle_profile(radius)
+            scaled_origin = [v * s for v in item.origin]
+            place = self.mapper.create_axis2placement_3d(scaled_origin, z_dir=(0,0,1), x_dir=(1,0,0))
+            local_identity = self.mapper.create_axis2placement_3d((0,0,0), z_dir=(0,0,1), x_dir=(1,0,0))
+            solid = self.mapper.create_extruded_solid(prof, length, local_identity)
+            shape = self.file.createIfcShapeRepresentation(self.mapper._context3d, "Body", "SweptSolid", [solid])
+            self.mapper.apply_color(shape, CONCRETE_SUBSTRUCTURE_COLOR)
+            prod_def = self.file.createIfcProductDefinitionShape(None, None, [shape])
+            elem = self.file.createIfcPile(
+                create_ifc_guid(), self._owner_history, Name=item.ifc_name,
+                ObjectPlacement=self.file.createIfcLocalPlacement(self.substructure_storey.ObjectPlacement, place),
+                Representation=prod_def, PredefinedType="BORED"
+            )
+            self.bind_element_to_substructure(elem)
+            self.metadata.assign_metadata(elem, {
+                "ComponentType": "Circular Pile",
+                "Diameter_m": item.diameter * s,
+                "Length_m": length,
+                "Material": "Reinforced Concrete",
+                "ConcreteGrade": getattr(cad_context, 'concrete_grade', 'M40')
+            }, property_set_name="Pset_OsdagSubstructure")
+
+        def _process_rebar(item):
+            radius = (item.diameter / 2.0) * s
+            length = item.length * s
+            prof = self.mapper.create_circle_profile(radius)
+            scaled_origin = [v * s for v in item.origin]
+            place = self.mapper.create_axis2placement_3d(scaled_origin, z_dir=item.dir, x_dir=(1,0,0) if item.dir[0]==0 else (0,1,0))
+            local_identity = self.mapper.create_axis2placement_3d((0,0,0), z_dir=(0,0,1), x_dir=(1,0,0))
+            solid = self.mapper.create_extruded_solid(prof, length, local_identity)
+            shape = self.file.createIfcShapeRepresentation(self.mapper._context3d, "Body", "SweptSolid", [solid])
+            self.mapper.apply_color(shape, REBAR_COLOR)
+            prod_def = self.file.createIfcProductDefinitionShape(None, None, [shape])
+            elem = self.file.createIfcReinforcingBar(
+                create_ifc_guid(), self._owner_history, Name=item.ifc_name,
+                ObjectPlacement=self.file.createIfcLocalPlacement(self.substructure_storey.ObjectPlacement, place),
+                Representation=prod_def, NominalDiameter=item.diameter * s
+            )
+            self.bind_element_to_substructure(elem)
+            self.metadata.assign_metadata(elem, {
+                "ComponentType": "Reinforcing Bar",
+                "NominalDiameter_mm": item.diameter,
+                "BarLength_m": length,
+                "SteelGrade": "Fe 500"
+            }, property_set_name="Pset_OsdagRebar")
+
         # Iterate over extraction dictionary explicitly
         for key in ["girders", "stiffeners"]:
              for item in extracted_dict.get(key, []):
@@ -618,6 +760,21 @@ class BridgeIfcGenerator:
                      _process_barrier(item)
                  elif item._class_name == "RailingSweep":
                      _process_railing(item)
+
+        for item in extracted_dict.get("pier_caps", []):
+            _process_pier_cap(item)
+
+        for item in extracted_dict.get("piers", []):
+            _process_pier(item)
+
+        for item in extracted_dict.get("pile_caps", []):
+            _process_pile_cap(item)
+
+        for item in extracted_dict.get("piles", []):
+            _process_pile(item)
+
+        for item in extracted_dict.get("reinforcement", []):
+            _process_rebar(item)
                  
         # Intentionally ignore "deck_textures"
         print("Model assembly complete. Saving...")

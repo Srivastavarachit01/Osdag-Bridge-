@@ -48,6 +48,20 @@ from osdagbridge.core.bridge_components.super_structure.cross_bracing.builder im
     build_cross_bracings
 )
 
+# Substructure builder imports
+from osdagbridge.core.bridge_components.sub_structure.pier.builder import (
+    build_pier_geometry
+)
+from osdagbridge.core.bridge_components.sub_structure.pier_cap.builder import (
+    build_pier_cap_geometry
+)
+from osdagbridge.core.bridge_components.foundation.pile_cap.builder import (
+    build_pile_cap_geometry
+)
+from osdagbridge.core.bridge_components.foundation.pile.builder import (
+    build_pile_geometry
+)
+
 from osdagbridge.core.bridge_types.plate_girder.dto import (
     BridgeParametersDTO,
 )
@@ -60,6 +74,12 @@ KEY_CAD_DECK = "Deck"
 KEY_CAD_CRASH_BARRIER = "Crash Barrier"
 KEY_CAD_RAILING = "Railing"
 KEY_CAD_MEDIAN = "Median"
+KEY_CAD_PIER = "Pier"
+KEY_CAD_PIER_CAP = "Pier Cap"
+KEY_CAD_PILE_CAP = "Pile Cap"
+KEY_CAD_PILE = "Pile"
+KEY_CAD_SUBSTRUCTURE = "Substructure"
+KEY_CAD_REBAR = "Reinforcement"
 KEY_MODULE_PG = "Plate Girder"
 
 
@@ -315,7 +335,27 @@ class PlateGirderCADGenerator:
             "flange_width": design_params.end_diaphragm_dims.flange_width,
             "web_thickness": design_params.end_diaphragm_dims.web_thickness,
             "flange_thickness": design_params.end_diaphragm_dims.flange_thickness,
-        }   
+        }
+
+        # SUBSTRUCTURE PARAMETERS
+        self.pier_diameter = getattr(design_params, 'pier_diameter', 800.0)
+        self.pier_height = getattr(design_params, 'pier_height', 3000.0)
+        self.pier_cap_top_width = getattr(design_params, 'pier_cap_top_width', 3000.0)
+        self.pier_cap_bottom_width = getattr(design_params, 'pier_cap_bottom_width', 1200.0)
+        self.pier_cap_depth = getattr(design_params, 'pier_cap_depth', 600.0)
+        self.pier_cap_length = getattr(design_params, 'pier_cap_length', 1200.0)
+        self.pile_cap_length = getattr(design_params, 'pile_cap_length', 2200.0)
+        self.pile_cap_width = getattr(design_params, 'pile_cap_width', 1200.0)
+        self.pile_cap_depth = getattr(design_params, 'pile_cap_depth', 600.0)
+        self.n_piles_per_cap = getattr(design_params, 'n_piles_per_cap', 4)
+        self.pile_diameter = getattr(design_params, 'pile_diameter', 400.0)
+        self.pile_length = getattr(design_params, 'pile_length', 5000.0)
+        self.pile_spacing = getattr(design_params, 'pile_spacing', 600.0)
+        self.rebar_main_diameter = getattr(design_params, 'rebar_main_diameter', 16.0)
+        self.rebar_spacing_longitudinal = getattr(design_params, 'rebar_spacing_longitudinal', 150.0)
+        self.rebar_transverse_diameter = getattr(design_params, 'rebar_transverse_diameter', 8.0)
+        self.rebar_spacing_transverse = getattr(design_params, 'rebar_spacing_transverse', 200.0)
+        self.rebar_cover = getattr(design_params, 'rebar_cover', 40.0)   
 
     def get_girder_depth_at(self, girder_idx, x):
         """
@@ -908,6 +948,105 @@ class PlateGirderCADGenerator:
         
         supports = supports_tri + supports_cyl
 
+        # STEP 12: BUILD SUBSTRUCTURE (PIER CAPS, PIERS, PILE CAPS, PILES & REINFORCEMENT)
+        pier_caps = []
+        piers = []
+        pile_caps = []
+        piles = []
+        substructure_rebar = []
+        substructure_rebar_main = []
+        substructure_rebar_ties = []
+
+        # Position substructure units under each bearing line at both ends of the bridge
+        z_contact = -self.girder_section_d / 2.0 - self.girder_section_tf_b
+        bearing_height = 120.0
+        z_cap_top = z_contact - bearing_height
+
+        for x_pos in [0.0, self.span_length_L]:
+            # Pier cap
+            cap_data = build_pier_cap_geometry(
+                pier_cap_top_width=self.pier_cap_top_width,
+                pier_cap_bottom_width=self.pier_cap_bottom_width,
+                pier_cap_depth=self.pier_cap_depth,
+                pier_cap_length=self.pier_cap_length,
+                center_x=x_pos,
+                center_y=0.0,
+                top_z=z_cap_top,
+                skew_angle=self.skew_angle,
+                rebar_main_diameter=self.rebar_main_diameter,
+                rebar_spacing_longitudinal=self.rebar_spacing_longitudinal,
+                rebar_transverse_diameter=self.rebar_transverse_diameter,
+                rebar_spacing_transverse=self.rebar_spacing_transverse,
+                rebar_cover=self.rebar_cover
+            )
+            pier_caps.append(cap_data["concrete"])
+            substructure_rebar.extend(cap_data["rebars"])
+            substructure_rebar_main.extend(cap_data["rebar_main"])
+            substructure_rebar_ties.extend(cap_data["rebar_stirrups"])
+
+            # Pier column
+            z_pier_top = z_cap_top - self.pier_cap_depth
+            pier_data = build_pier_geometry(
+                pier_diameter=self.pier_diameter,
+                pier_height=self.pier_height,
+                center_x=x_pos,
+                center_y=0.0,
+                top_z=z_pier_top,
+                rebar_main_diameter=self.rebar_main_diameter,
+                rebar_spacing_longitudinal=self.rebar_spacing_longitudinal,
+                rebar_transverse_diameter=self.rebar_transverse_diameter,
+                rebar_spacing_transverse=self.rebar_spacing_transverse,
+                rebar_cover=self.rebar_cover
+            )
+            piers.append(pier_data["concrete"])
+            substructure_rebar.extend(pier_data["rebars"])
+            substructure_rebar_main.extend(pier_data["rebar_main"])
+            substructure_rebar_ties.extend(pier_data["rebar_ties"])
+
+            # Pile cap
+            z_pile_cap_top = z_pier_top - self.pier_height
+            pile_cap_data = build_pile_cap_geometry(
+                pile_cap_length=self.pile_cap_length,
+                pile_cap_width=self.pile_cap_width,
+                pile_cap_depth=self.pile_cap_depth,
+                center_x=x_pos,
+                center_y=0.0,
+                top_z=z_pile_cap_top,
+                skew_angle=self.skew_angle,
+                rebar_main_diameter=self.rebar_main_diameter,
+                rebar_spacing_longitudinal=self.rebar_spacing_longitudinal,
+                rebar_transverse_diameter=self.rebar_transverse_diameter,
+                rebar_spacing_transverse=self.rebar_spacing_transverse,
+                rebar_cover=self.rebar_cover
+            )
+            pile_caps.append(pile_cap_data["concrete"])
+            substructure_rebar.extend(pile_cap_data["rebars"])
+            substructure_rebar_main.extend(pile_cap_data["rebar_mats"])
+
+            # Piles
+            z_pile_top = z_pile_cap_top - self.pile_cap_depth
+            pile_data = build_pile_geometry(
+                n_piles_per_cap=self.n_piles_per_cap,
+                pile_diameter=self.pile_diameter,
+                pile_length=self.pile_length,
+                pile_spacing=self.pile_spacing,
+                center_x=x_pos,
+                center_y=0.0,
+                top_z=z_pile_top,
+                skew_angle=self.skew_angle,
+                rebar_main_diameter=self.rebar_main_diameter,
+                rebar_spacing_longitudinal=self.rebar_spacing_longitudinal,
+                rebar_transverse_diameter=self.rebar_transverse_diameter,
+                rebar_spacing_transverse=self.rebar_spacing_transverse,
+                rebar_cover=self.rebar_cover
+            )
+            piles.extend(pile_data["concrete"])
+            substructure_rebar.extend(pile_data["rebars"])
+            substructure_rebar_main.extend(pile_data["rebar_main"])
+            substructure_rebar_ties.extend(pile_data["rebar_ties"])
+
+        substructure_concrete = pier_caps + piers + pile_caps + piles
+
         # RETURN ALL GENERATED COMPONENTS
         
         return {
@@ -956,7 +1095,17 @@ class PlateGirderCADGenerator:
             "median_w_beams": median_w_beams,
             
             # Railings
-            "railings": railings
+            "railings": railings,
+
+            # Substructure components
+            "pier_caps": pier_caps,
+            "piers": piers,
+            "pile_caps": pile_caps,
+            "piles": piles,
+            "substructure_concrete": substructure_concrete,
+            "substructure_rebar": substructure_rebar,
+            "substructure_rebar_main": substructure_rebar_main,
+            "substructure_rebar_ties": substructure_rebar_ties
         }
 
     def create3Dcad(self):
@@ -1013,7 +1162,7 @@ class PlateGirderCADGenerator:
         # Collect shapes from model_data, excluding support geometry from export.
         shapes = []
         for key, v in self.model_data.items():
-            if key in {"supports", "supports_tri", "supports_cyl"}:
+            if key in {"supports", "supports_tri", "supports_cyl", "substructure_concrete", "substructure_rebar_main", "substructure_rebar_ties"}:
                 continue
             shapes.extend(_flatten(v))
 
@@ -1100,6 +1249,42 @@ class PlateGirderCADGenerator:
             label = [KEY_CAD_MEDIAN, hover_dict.get(KEY_CAD_MEDIAN)]
             shapes = self.model_data["median_barriers"]
             osdag_display_shape(self.display, shapes, color=MEDIAN_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pier":
+            label = [KEY_CAD_PIER, "Pier"]
+            shapes = self.model_data.get("piers", [])
+            osdag_display_shape(self.display, shapes, color=DECK_COLOR, transparency=0.65, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pier Cap":
+            label = [KEY_CAD_PIER_CAP, "Pier Cap"]
+            shapes = self.model_data.get("pier_caps", [])
+            osdag_display_shape(self.display, shapes, color=DECK_COLOR, transparency=0.65, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pile Cap":
+            label = [KEY_CAD_PILE_CAP, "Pile Cap"]
+            shapes = self.model_data.get("pile_caps", [])
+            osdag_display_shape(self.display, shapes, color=DECK_COLOR, transparency=0.65, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pile":
+            label = [KEY_CAD_PILE, "Pile"]
+            shapes = self.model_data.get("piles", [])
+            osdag_display_shape(self.display, shapes, color=DECK_COLOR, transparency=0.65, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Reinforcement":
+            label = [KEY_CAD_REBAR, "Reinforcement"]
+            shapes = self.model_data.get("substructure_rebar", [])
+            rebar_color = Quantity_Color(180/255, 80/255, 45/255, Quantity_TOC_RGB)
+            osdag_display_shape(self.display, shapes, color=rebar_color, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Substructure":
+            label = [KEY_CAD_SUBSTRUCTURE, "Substructure"]
+            conc_shapes = self.model_data.get("substructure_concrete", [])
+            rebar_shapes = self.model_data.get("substructure_rebar", [])
+            rebar_color = Quantity_Color(180/255, 80/255, 45/255, Quantity_TOC_RGB)
+            if conc_shapes:
+                osdag_display_shape(self.display, conc_shapes, color=DECK_COLOR, transparency=0.65, update=False, label=label, canvas=self.cad_widget)
+            if rebar_shapes:
+                osdag_display_shape(self.display, rebar_shapes, color=rebar_color, update=True, label=[KEY_CAD_REBAR, "Reinforcement"], canvas=self.cad_widget)
 
 
 def osdag_display_shape(display, shapes, material=None, texture=None, color=None, transparency=None, update=False, label=[], canvas=None):

@@ -397,4 +397,24 @@ class BridgeParametersDTO:
     girder_segments_dict: dict[int, list[GirderSegmentDTO]] = field(default_factory=dict)
     stiffeners_dict: dict[int, dict] = field(default_factory=dict)
 
+    # --- Substructure & Foundation Parameters ---
+    pier_diameter: float = 800.0
+    pier_height: float = 3000.0
+    pier_cap_top_width: float = 3000.0
+    pier_cap_bottom_width: float = 1200.0
+    pier_cap_depth: float = 600.0
+    pier_cap_length: float = 1200.0
+    pile_cap_length: float = 2200.0
+    pile_cap_width: float = 1200.0
+    pile_cap_depth: float = 600.0
+    n_piles_per_cap: int = 4
+    pile_diameter: float = 400.0
+    pile_length: float = 5000.0
+    pile_spacing: float = 600.0
+    rebar_main_diameter: float = 16.0
+    rebar_spacing_longitudinal: float = 150.0
+    rebar_transverse_diameter: float = 8.0
+    rebar_spacing_transverse: float = 200.0
+    rebar_cover: float = 40.0
+
 
